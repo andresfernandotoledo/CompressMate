@@ -1,0 +1,347 @@
+import os
+import subprocess
+import tempfile
+from flask import Flask, render_template, request, send_file, abort
+from io import BytesIO
+from PIL import Image, UnidentifiedImageError
+import moviepy.editor as mp
+from pdf2docx import Converter as PDF2DOCXConverter
+from pdf2image import convert_from_path
+from docx2pdf import convert as docx_to_pdf
+import pandas as pd
+from pptx import Presentation
+import pdf2image
+#from pdf2pptxf import convert as pptx_to_pdf
+#from pdf2xxls import convert as xlsx_to_pdf
+import docx2pdf
+import openpyxl
+from docx import Document
+from xlsx2html import xlsx2html
+#import tabula
+
+app = Flask(__name__)
+
+# Funciones de compresión
+def compress_image(input_stream, quality=85):
+    try:
+        output = BytesIO()
+        with Image.open(input_stream) as img:
+            # Detectar el formato de la imagen y convertirlo a JPEG para la compresión
+            img_format = img.format if img.format else 'JPEG'  # Si no se detecta formato, usar JPEG por defecto
+            img = img.convert("RGB")  # Convertir a RGB si la imagen no está en RGB
+            img.save(output, format='JPEG', quality=quality)  # Guardar la imagen en formato JPEG
+        output.seek(0)
+        return output
+    except UnidentifiedImageError:
+        raise ValueError("El archivo no es una imagen válida.")
+    except Exception as e:
+        raise ValueError(f"Ocurrió un error al procesar la imagen: {str(e)}")
+    
+def compress_pdf(input_stream, target_size_kb):
+    # Crear archivos temporales
+    temp_input_path = tempfile.mktemp(suffix='.pdf')
+    temp_output_path = tempfile.mktemp(suffix='.pdf')
+
+    # Guardar el archivo recibido en un archivo temporal
+    with open(temp_input_path, 'wb') as f:
+        f.write(input_stream.read())
+
+    # Configuraciones de calidad para Ghostscript
+    quality_settings = ['/screen', '/ebook', '/printer', '/prepress']
+    
+    for quality in quality_settings:
+        gs_command = [
+            "gs",
+            "-sDEVICE=pdfwrite",
+            f"-dPDFSETTINGS={quality}",
+            "-dNOPAUSE",
+            "-dQUIET",
+            "-dBATCH",
+            f"-sOutputFile={temp_output_path}",
+            temp_input_path
+        ]
+
+        # Ejecutar el comando Ghostscript
+        subprocess.run(gs_command, check=True)
+
+        # Verificar el tamaño del archivo de salida
+        output_size_kb = os.path.getsize(temp_output_path) / 1024
+
+        if output_size_kb <= target_size_kb:
+            break
+
+    # Leer el archivo de salida y devolverlo
+    with open(temp_output_path, 'rb') as f:
+        output_data = f.read()
+
+    # Eliminar archivos temporales
+    os.remove(temp_input_path)
+    os.remove(temp_output_path)
+
+    output_stream = BytesIO(output_data)
+    output_stream.seek(0)
+    return output_stream
+
+def compress_video(input_stream, bitrate="500k"):
+    try:
+        # Crear un archivo temporal para el video de entrada
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.tmp') as temp_input_file:
+            temp_input_path = temp_input_file.name
+            # Guardar el flujo de entrada en el archivo temporal
+            temp_input_file.write(input_stream.read())
+        
+        # Crear un archivo temporal para el video comprimido
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_output_file:
+            temp_output_path = temp_output_file.name
+        
+        # Cargar el video desde el archivo temporal
+        video = mp.VideoFileClip(temp_input_path)
+        
+        # Redimensionar el video (opcional)
+        video_resized = video.resize(height=720)
+        
+        # Guardar el video comprimido en el archivo temporal
+        video_resized.write_videofile(temp_output_path, bitrate=bitrate, codec='libx264', audio_codec='aac')
+        
+        # Eliminar el archivo temporal de entrada
+        os.remove(temp_input_path)
+        
+        return temp_output_path
+    except Exception as e:
+        raise ValueError(f"Ocurrió un error al procesar el video: {str(e)}")
+    
+# Funciones de conversión
+def convert_image(input_stream, output_format):
+    valid_formats = ['jpeg', 'png', 'bmp', 'gif', 'tiff']
+
+    if output_format.lower() not in valid_formats:
+        raise ValueError("Formato de imagen no válido. Los formatos válidos son: " + ", ".join(valid_formats))
+    
+    output = BytesIO()
+
+    try:
+        with Image.open(input_stream) as img:
+            # Convertir la imagen a un modo compatible con el formato de salida
+            if img.mode not in ['RGB', 'RGBA']:
+                img = img.convert('RGB')  # Convertir a RGB si es necesario
+
+            # Guardar la imagen en el formato de salida deseado
+            img.save(output, format=output_format.upper())
+    except Exception as e:
+        raise ValueError(f"Ocurrió un error al convertir la imagen: {str(e)}")
+
+    output.seek(0)
+    return output
+
+def convert_archivo(input_stream, file_type, output_format):
+    output = BytesIO()
+
+    # Función para manejar la conversión de PDF
+    def convert_pdf():
+        if output_format.lower() == 'docx':
+            cv = PDF2DOCXConverter(input_stream)
+            cv.convert(output, start=0, end=None)
+            cv.close()
+        elif output_format.lower() in ['jpeg', 'png']:
+            images = pdf2image.convert_from_path(input_stream)
+            for img in images:
+                img.save(output, format=output_format.upper())
+        else:
+            raise ValueError("Formato de salida no soportado para PDF.")
+        output.seek(0)
+
+    # Función para manejar la conversión de imágenes
+    def convert_images():
+        if output_format.lower() not in ['jpeg', 'png']:
+            raise ValueError("Formato de imagen no válido. Los formatos válidos son: jpeg, png, bmp, gif, tiff")
+        try:
+            with Image.open(input_stream) as img:
+                if output_format.lower() == 'pdf':
+                    img.save(output, format='PDF')
+                elif output_format.lower() in ['docx', 'pptx', 'xlsx']:
+                    raise NotImplementedError(f"La conversión de imágenes a {output_format.upper()} aún no está implementada.")
+                else:
+                    img.save(output, format=output_format.upper())
+        except Exception as e:
+            raise ValueError(f"Ocurrió un error al convertir la imagen: {str(e)}")
+        output.seek(0)
+
+    # Función para manejar la conversión de DOCX
+    def convert_docx():
+        temp_path = tempfile.mktemp(suffix='.docx')
+        with open(temp_path, 'wb') as f:
+            f.write(input_stream.read())
+
+        if output_format.lower() == 'pdf':
+            docx_to_pdf(temp_path, output.name)
+        elif output_format.lower() == 'xlsx':
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            doc = Document(temp_path)
+            for i, para in enumerate(doc.paragraphs):
+                ws.cell(row=i+1, column=1, value=para.text)
+            wb.save(output.name)
+        elif output_format.lower() == 'pptx':
+            prs = Presentation()
+            doc = Document(temp_path)
+            for para in doc.paragraphs:
+                slide = prs.slides.add_slide(prs.slide_layouts[1])
+                text_box = slide.shapes.add_textbox(0, 0, prs.slide_width, prs.slide_height)
+                text_frame = text_box.text_frame
+                text_frame.text = para.text
+            prs.save(output.name)
+        elif output_format.lower() in ['jpeg', 'png']:
+            raise NotImplementedError("La conversión de DOCX a imagen aún no está implementada.")
+        else:
+            raise ValueError("Formato de salida no soportado para DOCX.")
+        output.seek(0)
+
+    # Función para manejar la conversión de XLSX
+    def convert_xlsx():
+        temp_path = tempfile.mktemp(suffix='.xlsx')
+        with open(temp_path, 'wb') as f:
+            f.write(input_stream.read())
+
+        if output_format.lower() == 'pdf':
+            pdf_path = tempfile.mktemp(suffix='.pdf')
+            subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf', temp_path, '--outdir', os.path.dirname(pdf_path)])
+            with open(pdf_path, 'rb') as pdf_file:
+                output.write(pdf_file.read())
+        elif output_format.lower() == 'docx':
+            wb = pd.read_excel(temp_path)
+            doc = Document()
+            for row in wb.values:
+                doc.add_paragraph(' '.join(map(str, row)))
+            doc.save(output.name)
+        elif output_format.lower() == 'pptx':
+            prs = Presentation()
+            wb = pd.read_excel(temp_path)
+            for row in wb.values:
+                slide = prs.slides.add_slide(prs.slide_layouts[1])
+                text_box = slide.shapes.add_textbox(0, 0, prs.slide_width, prs.slide_height)
+                text_frame = text_box.text_frame
+                text_frame.text = ' '.join(map(str, row))
+            prs.save(output.name)
+        elif output_format.lower() in ['jpeg', 'png']:
+            raise NotImplementedError("La conversión de XLSX a imagen aún no está implementada.")
+        else:
+            raise ValueError("Formato de salida no soportado para XLSX.")
+        output.seek(0)
+
+    # Ejecutar la conversión según el tipo de archivo
+    if file_type == 'pdf':
+        convert_pdf()
+    elif file_type == 'imagen':
+        convert_images()
+    elif file_type == 'docx':
+        convert_docx()
+    elif file_type == 'xlsx':
+        convert_xlsx()
+    else:
+        raise ValueError("Tipo de archivo no soportado.")
+
+    # Crear nombre de archivo para la salida
+    filename = f'converted_file.{output_format}'
+    
+    return send_file(output, as_attachment=True, download_name=filename, mimetype=f'application/{output_format.lower()}')
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        file = request.files.get('file')
+        if not file:
+            abort(400, description="No se ha enviado ningún archivo.")
+        
+        action_type = request.form.get('action_type')
+        file_type = request.form.get('file_type', '')
+        quality = int(request.form.get('quality', 85))
+        quality_kb = int(request.form.get('quality_kb', 500))  # Toma el tamaño objetivo en KB
+        bitrate = request.form.get('bitrate', '500k')
+        output_format = request.form.get('output_format', '')
+
+        file_stream = BytesIO(file.read())
+
+        try:
+            if action_type == 'compress':
+                if file_type == 'imagen':
+                    output_file = compress_image(file_stream, quality)
+                    mime_type = {
+                        'jpeg': 'image/jpeg',
+                        'png': 'image/png',
+                        'bmp': 'image/bmp',
+                        'gif': 'image/gif',
+                        'tiff': 'image/tiff'
+                    }.get(output_format.lower(), 'application/octet-stream')
+                    extension = {
+                        'jpeg': 'jpeg',
+                        'png': 'png',
+                        'bmp': 'bmp',
+                        'gif': 'gif',
+                        'tiff': 'tiff'
+                    }.get(output_format.lower(), 'bin')
+                    filename = f'compressed_{file.filename.rsplit(".", 1)[0]}.{extension}'
+                    
+                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype=mime_type)
+                
+                elif file_type == 'pdf':
+                    output_file = compress_pdf(file_stream, quality_kb)
+                    filename = f'compressed_{file.filename.rsplit(".", 1)[0]}.pdf'
+                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='application/pdf')
+                
+                elif file_type == 'video':
+                    output_file = compress_video(file_stream, bitrate)
+                    filename = f'compressed_{file.filename.rsplit(".", 1)[0]}.mp4'
+                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='video/mp4')
+                
+            elif action_type == 'convert':
+                if file_type == 'imagen':
+                    output_file = convert_image(file_stream, output_format)
+                    mime_type = {
+                        'jpeg': 'image/jpeg',
+                        'png': 'image/png',
+                        'bmp': 'image/bmp',
+                        'gif': 'image/gif',
+                        'tiff': 'image/tiff'
+                    }.get(output_format.lower(), 'application/octet-stream')
+                    extension = {
+                        'jpeg': 'jpeg',
+                        'png': 'png',
+                        'bmp': 'bmp',
+                        'gif': 'gif',
+                        'tiff': 'tiff'
+                    }.get(output_format.lower(), 'bin')
+                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{extension}'
+                    
+                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype=mime_type)
+                
+                elif file_type == 'pdf':
+                    output_file = convert_archivo(file_stream, file_type, output_format)
+                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{output_format}'
+                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='application/octet-stream')
+                
+                elif file_type == 'docx':
+                    output_file = convert_archivo(file_stream, file_type, output_format)
+                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{output_format}'
+                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='application/octet-stream')
+                
+                elif file_type == 'pptx':
+                    output_file = convert_archivo(file_stream, file_type, output_format)
+                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{output_format}'
+                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='application/octet-stream')
+                
+                elif file_type == 'xlsx':
+                    output_file = convert_archivo(file_stream, file_type, output_format)
+                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{output_format}'
+                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='application/octet-stream')
+
+            else:
+                abort(400, description="Tipo de acción no soportado.")
+        except ValueError as e:
+            return str(e), 400
+        except Exception as e:
+            return str(e), 500
+
+    return render_template('index.html')
+if __name__ == '__main__':
+    app.run(debug=True)
+

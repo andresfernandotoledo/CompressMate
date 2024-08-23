@@ -1,0 +1,3 @@
+[console_scripts]
+pdf2pptx = pdf2pptx.cli:main
+

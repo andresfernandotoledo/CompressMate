@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CompressMate</title>
+    <style>
+        .hidden {
+            display: none;
+        }
+        .calculator {
+            position: fixed;
+            top: 10px;
+            right: 10px; /* Cambiado de left a right */
+            padding: 10px;
+            border: 1px solid #ccc;
+            background-color: #f9f9f9;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            z-index: 1000; /* Asegura que esté por encima de otros elementos */
+        }
+        .calculator label, .calculator input, .calculator button {
+            display: block;
+            margin: 5px 0;
+        }
+    </style>
+    <script>
+        function updateForm() {
+            var fileType = document.getElementById('file_type_compress').value;
+            document.getElementById('image_quality').classList.add('hidden');
+            document.getElementById('compression_quality').classList.add('hidden');
+            document.getElementById('bitrate').classList.add('hidden');
+
+            if (fileType === 'imagen') {
+                document.getElementById('image_quality').classList.remove('hidden');
+            } else if (fileType === 'pdf' || fileType === 'docx' || fileType === 'pptx' || fileType === 'xlsx') {
+                document.getElementById('compression_quality').classList.remove('hidden');
+            } else if (fileType === 'video') {
+                document.getElementById('bitrate').classList.remove('hidden');
+            }
+        }
+
+        function updateOutputFormats() {
+            const fileType = document.getElementById('file_type_convert').value;
+            const formatSelect = document.getElementById('output_format');
+            
+            // Limpiar opciones existentes
+            formatSelect.innerHTML = '';
+            
+            // Agregar nuevas opciones basadas en el tipo de archivo seleccionado
+            const formats = {
+                'imagen': ['jpeg', 'png', 'bmp', 'gif', 'tiff'],
+                'pdf': ['docx', 'pptx', 'xlsx', 'jpeg', 'png'],
+                'docx': ['pdf', 'pptx', 'xlsx'],
+                'pptx': ['pdf', 'docx', 'xlsx'],
+                'xlsx': ['pdf', 'docx', 'pptx'],
+                'video': ['mp4', 'mov', 'wmv', 'avi', 'flv', 'webm']
+            };
+            
+            if (formats[fileType]) {
+                formats[fileType].forEach(format => {
+                    const option = document.createElement('option');
+                    option.value = format;
+                    option.textContent = format.toUpperCase(); // Opcional: mostrar en mayúsculas
+                    formatSelect.appendChild(option);
+                });
+            }
+        }
+        
+        function toggleOptions(action) {
+            if (action === 'compress') {
+                document.getElementById('compress_options').style.display = 'block';
+                document.getElementById('convert_options').style.display = 'none';
+            } else if (action === 'convert') {
+                document.getElementById('compress_options').style.display = 'none';
+                document.getElementById('convert_options').style.display = 'block';
+                updateOutputFormats();  // Actualizar formatos al cambiar a conversión
+            }
+        }
+
+        function convertBytes() {
+            var inputValue = parseFloat(document.getElementById('input_value').value);
+            var unit = document.getElementById('input_unit').value;
+            var result = document.getElementById('conversion_result');
+            
+            if (isNaN(inputValue)) {
+                result.textContent = 'Por favor, ingresa un valor válido.';
+                return;
+            }
+
+            // Convertir a bytes según la unidad seleccionada
+            var bytes;
+            switch (unit) {
+                case 'bytes':
+                    bytes = inputValue;
+                    break;
+                case 'kb':
+                    bytes = inputValue * 1024;
+                    break;
+                case 'mb':
+                    bytes = inputValue * 1024 * 1024;
+                    break;
+                case 'gb':
+                    bytes = inputValue * 1024 * 1024 * 1024;
+                    break;
+                default:
+                    bytes = inputValue;
+                    break;
+            }
+
+            var kb = bytes / 1024;
+            var mb = kb / 1024;
+            var gb = mb / 1024;
+
+            result.innerHTML = `Bytes: ${bytes.toFixed(2)} B<br>KB: ${kb.toFixed(2)} KB<br>MB: ${mb.toFixed(2)} MB<br>GB: ${gb.toFixed(2)} GB`;
+        }
+    </script>
+</head>
+<body>
+
+    <div class="calculator">
+        <h3>Calculadora de Tamaño de Archivos</h3>
+        <label for="input_value">Ingresa tamaño:</label>
+        <input type="number" id="input_value" name="input_value" min="0" step="any">
+        <label for="input_unit">Unidad:</label>
+        <select id="input_unit" name="input_unit">
+            <option value="bytes">Bytes</option>
+            <option value="kb">Kilobytes (KB)</option>
+            <option value="mb">Megabytes (MB)</option>
+            <option value="gb">Gigabytes (GB)</option>
+        </select>
+ 
+        <button type="button" onclick="convertBytes()">Calcular</button>
+        <div id="conversion_result">Introduce un valor para ver la conversión.</div>
+    </div>
+
+    <h1>CompressMate</h1>
+    <form action="/" method="post" enctype="multipart/form-data">
+        <label for="file">Selecciona un archivo:</label>
+        <input type="file" id="file" name="file" required><br><br>
+
+        <label for="action_type">Selecciona una acción:</label>
+        <select id="action_type" name="action_type" onchange="toggleOptions(this.value)">
+            <option value="compress">Comprimir</option>
+            <option value="convert">Convertir</option>
+        </select><br><br>
+
+        <div id="compress_options">
+            <label for="file_type_compress">Tipo de archivo para compresión:</label>
+            <select id="file_type_compress" name="file_type" onchange="updateForm()">
+                <option value="imagen">Imagen</option>
+                <option value="pdf">PDF</option>
+                <option value="docx">DOCX</option>
+                <option value="pptx">PPTX</option>
+                <option value="xlsx">XLSX</option>
+                <option value="video">Video</option>
+            </select><br><br>
+
+            <div id="image_quality" class="hidden">
+                <label for="quality">Calidad de compresión (imágenes):</label>
+                <input type="number" id="quality" name="quality" min="1" max="100" value="85"><br><br>
+            </div>
+
+            <div id="compression_quality" class="hidden">
+                <label for="quality_kb">Calidad de compresión (PDF, DOCX, PPTX, XLSX, ingresa el tamaño objetivo en Bytes):</label>
+                <input type="number" id="quality_kb" name="quality_kb" min="1" value="100"><br><br>
+            </div>
+
+            <div id="bitrate" class="hidden">
+                <label for="bitrate">Bitrate (videos en kbps):</label>
+                <input type="number" id="bitrate" name="bitrate" value="500"><br><br>
+            </div>
+        </div>
+
+        <div id="convert_options" style="display:none;">
+            <label for="file_type_convert">Tipo de archivo para conversión:</label>
+            <select id="file_type_convert" name="file_type" onchange="updateOutputFormats()">
+                <option value="imagen">Imagen</option>
+                <option value="pdf">PDF</option>
+                <option value="docx">DOCX</option>
+                <option value="pptx">PPTX</option>
+                <option value="xlsx">XLSX</option>
+                <option value="video">Video</option>
+            </select><br><br>
+
+            <label for="output_format">Formato de salida:</label>
+            <select id="output_format" name="output_format">
+                <!-- Las opciones se llenarán dinámicamente -->
+            </select><br><br>
+        </div>
+
+        <button type="submit">Procesar</button>
+    </form>
+</body>
+</html>
+

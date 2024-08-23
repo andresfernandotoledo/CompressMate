@@ -1,0 +1,30 @@
+Metadata-Version: 2.0
+Name: pdf2xlsx
+Version: 1.2.0
+Summary: Invoice extraction from zip, order detail transformation
+Home-page: https://github.com/etibger/pdf2xlsx
+Author: Tibor Gerlai
+Author-email: tibi.gerlai@gmail.com
+License: MIT
+Keywords: pdf to excel conversion
+Platform: UNKNOWN
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Environment :: Console
+Classifier: Environment :: Win32 (MS Windows)
+Classifier: Intended Audience :: End Users/Desktop
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Natural Language :: English
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3.5
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Office/Business :: Financial :: Spreadsheet
+Requires-Dist: PyPDF2
+Requires-Dist: openpyxl
+Provides-Extra: doc
+Requires-Dist: Sphinx; extra == 'doc'
+Requires-Dist: autodoc; extra == 'doc'
+
+
+Extract zip, search for pdf, get invoices from pdf, write them to xlsx file
+
+
