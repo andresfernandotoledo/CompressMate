@@ -1,52 +1,81 @@
 import os
 import subprocess
 import tempfile
+import pdfplumber
 from flask import Flask, render_template, request, send_file, abort
 from io import BytesIO
 from PIL import Image, UnidentifiedImageError
 import moviepy.editor as mp
-from pdf2docx import Converter as PDF2DOCXConverter
 from pdf2image import convert_from_path
 from docx2pdf import convert as docx_to_pdf
 import pandas as pd
 from pptx import Presentation
-import pdf2image
-#from pdf2pptxf import convert as pptx_to_pdf
-#from pdf2xxls import convert as xlsx_to_pdf
-import docx2pdf
-import openpyxl
+from pptx.util import Inches
 from docx import Document
-from xlsx2html import xlsx2html
-#import tabula
+import openpyxl
+from openpyxl import Workbook, load_workbook
+import pdfkit
+from docx2pdf import convert as docx2pdf_convert
+from fpdf import FPDF
+from pdf2docx import Converter as PDF2DOCXConverter
+from werkzeug.utils import secure_filename
+import magic  # Asegúrate de que esta línea esté presente
 
 app = Flask(__name__)
 
+# Función de detección del tipo de archivo
+def detect_file_type(file_stream, filename):
+    file_stream.seek(0)
+    mime = magic.Magic(mime=True)
+    mime_type = mime.from_buffer(file_stream.read(2048))
+    file_stream.seek(0)
+
+    if 'image' in mime_type:
+        return 'imagen'
+    elif 'pdf' in mime_type:
+        return 'pdf'
+    elif 'vnd.openxmlformats-officedocument.wordprocessingml.document' in mime_type:
+        return 'docx'
+    elif 'vnd.openxmlformats-officedocument.presentationml.presentation' in mime_type:
+        return 'pptx'
+    elif 'vnd.openxmlformats-officedocument.spreadsheetml.sheet' in mime_type:
+        return 'xlsx'
+    else:
+        ext = os.path.splitext(filename)[1].lower()
+        if ext == '.docx':
+            return 'docx'
+        elif ext == '.pptx':
+            return 'pptx'
+        elif ext == '.xlsx':
+            return 'xlsx'
+        elif ext == '.pdf':
+            return 'pdf'
+        elif ext in ['.jpeg', '.jpg', '.png', '.bmp', '.gif', '.tiff']:
+            return 'imagen'
+        else:
+            return 'desconocido'
+    
 # Funciones de compresión
 def compress_image(input_stream, quality=85):
     try:
         output = BytesIO()
         with Image.open(input_stream) as img:
-            # Detectar el formato de la imagen y convertirlo a JPEG para la compresión
-            img_format = img.format if img.format else 'JPEG'  # Si no se detecta formato, usar JPEG por defecto
             img = img.convert("RGB")  # Convertir a RGB si la imagen no está en RGB
-            img.save(output, format='JPEG', quality=quality)  # Guardar la imagen en formato JPEG
+            img.save(output, format='JPEG', quality=quality)
         output.seek(0)
         return output
     except UnidentifiedImageError:
         raise ValueError("El archivo no es una imagen válida.")
     except Exception as e:
         raise ValueError(f"Ocurrió un error al procesar la imagen: {str(e)}")
-    
+
 def compress_pdf(input_stream, target_size_kb):
-    # Crear archivos temporales
     temp_input_path = tempfile.mktemp(suffix='.pdf')
     temp_output_path = tempfile.mktemp(suffix='.pdf')
 
-    # Guardar el archivo recibido en un archivo temporal
     with open(temp_input_path, 'wb') as f:
         f.write(input_stream.read())
 
-    # Configuraciones de calidad para Ghostscript
     quality_settings = ['/screen', '/ebook', '/printer', '/prepress']
     
     for quality in quality_settings:
@@ -60,21 +89,15 @@ def compress_pdf(input_stream, target_size_kb):
             f"-sOutputFile={temp_output_path}",
             temp_input_path
         ]
-
-        # Ejecutar el comando Ghostscript
         subprocess.run(gs_command, check=True)
-
-        # Verificar el tamaño del archivo de salida
         output_size_kb = os.path.getsize(temp_output_path) / 1024
 
         if output_size_kb <= target_size_kb:
             break
 
-    # Leer el archivo de salida y devolverlo
     with open(temp_output_path, 'rb') as f:
         output_data = f.read()
 
-    # Eliminar archivos temporales
     os.remove(temp_input_path)
     os.remove(temp_output_path)
 
@@ -82,35 +105,81 @@ def compress_pdf(input_stream, target_size_kb):
     output_stream.seek(0)
     return output_stream
 
-def compress_video(input_stream, bitrate="500k"):
-    try:
-        # Crear un archivo temporal para el video de entrada
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.tmp') as temp_input_file:
-            temp_input_path = temp_input_file.name
-            # Guardar el flujo de entrada en el archivo temporal
-            temp_input_file.write(input_stream.read())
-        
-        # Crear un archivo temporal para el video comprimido
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_output_file:
-            temp_output_path = temp_output_file.name
-        
-        # Cargar el video desde el archivo temporal
-        video = mp.VideoFileClip(temp_input_path)
-        
-        # Redimensionar el video (opcional)
-        video_resized = video.resize(height=720)
-        
-        # Guardar el video comprimido en el archivo temporal
-        video_resized.write_videofile(temp_output_path, bitrate=bitrate, codec='libx264', audio_codec='aac')
-        
-        # Eliminar el archivo temporal de entrada
-        os.remove(temp_input_path)
-        
-        return temp_output_path
-    except Exception as e:
-        raise ValueError(f"Ocurrió un error al procesar el video: {str(e)}")
+def compress_docx(input_stream, target_size_kb):
+    temp_input_path = tempfile.mktemp(suffix='.docx')
+    temp_output_path = tempfile.mktemp(suffix='.docx')
+
+    with open(temp_input_path, 'wb') as f:
+        f.write(input_stream.read())
+
+    doc = Document(temp_input_path)
+    doc.save(temp_output_path)
+
+    output_size_kb = os.path.getsize(temp_output_path) / 1024
+    if output_size_kb > target_size_kb:
+        print("No se pudo comprimir a menos del tamaño deseado.")
     
-# Funciones de conversión
+    with open(temp_output_path, 'rb') as f:
+        output_data = f.read()
+
+    os.remove(temp_input_path)
+    os.remove(temp_output_path)
+
+    output_stream = BytesIO(output_data)
+    output_stream.seek(0)
+    return output_stream
+
+def compress_pptx(input_stream, target_size_kb):
+    temp_input_path = tempfile.mktemp(suffix='.pptx')
+    temp_output_path = tempfile.mktemp(suffix='.pptx')
+
+    with open(temp_input_path, 'wb') as f:
+        f.write(input_stream.read())
+
+    ppt = Presentation(temp_input_path)
+    ppt.save(temp_output_path)
+
+    output_size_kb = os.path.getsize(temp_output_path) / 1024
+    if output_size_kb > target_size_kb:
+        print("No se pudo comprimir a menos del tamaño deseado.")
+    
+    with open(temp_output_path, 'rb') as f:
+        output_data = f.read()
+
+    os.remove(temp_input_path)
+    os.remove(temp_output_path)
+
+    output_stream = BytesIO(output_data)
+    output_stream.seek(0)
+    return output_stream
+
+
+def compress_xlsx(input_stream, target_size_kb):
+    temp_input_path = tempfile.mktemp(suffix='.xlsx')
+    temp_output_path = tempfile.mktemp(suffix='.xlsx')
+
+    with open(temp_input_path, 'wb') as f:
+        f.write(input_stream.read())
+
+    workbook = load_workbook(temp_input_path)
+    workbook.save(temp_output_path)
+
+    output_size_kb = os.path.getsize(temp_output_path) / 1024
+    if output_size_kb > target_size_kb:
+        print("No se pudo comprimir a menos del tamaño deseado.")
+        # Aquí puedes intentar alguna otra estrategia de compresión o regresar un error al usuario.
+
+    with open(temp_output_path, 'rb') as f:
+        output_data = f.read()
+
+    os.remove(temp_input_path)
+    os.remove(temp_output_path)
+
+    output_stream = BytesIO(output_data)
+    output_stream.seek(0)
+    return output_stream
+
+# Función para convertir imágenes a diferentes formatos
 def convert_image(input_stream, output_format):
     valid_formats = ['jpeg', 'png', 'bmp', 'gif', 'tiff']
 
@@ -121,129 +190,390 @@ def convert_image(input_stream, output_format):
 
     try:
         with Image.open(input_stream) as img:
-            # Convertir la imagen a un modo compatible con el formato de salida
-            if img.mode not in ['RGB', 'RGBA']:
-                img = img.convert('RGB')  # Convertir a RGB si es necesario
-
-            # Guardar la imagen en el formato de salida deseado
+            # Convertir la imagen a RGB si el formato de salida no soporta transparencia
+            if output_format.lower() in ['jpeg', 'bmp', 'gif', 'tiff'] and img.mode not in ['RGB', 'L']:
+                img = img.convert('RGB')
+            elif output_format.lower() == 'png' and img.mode == 'RGBA':
+                img = img.convert('RGBA')
+            
             img.save(output, format=output_format.upper())
+    except UnidentifiedImageError:
+        raise ValueError("El archivo no es una imagen válida.")
     except Exception as e:
         raise ValueError(f"Ocurrió un error al convertir la imagen: {str(e)}")
 
     output.seek(0)
     return output
 
-def convert_archivo(input_stream, file_type, output_format):
-    output = BytesIO()
-
-    # Función para manejar la conversión de PDF
-    def convert_pdf():
-        if output_format.lower() == 'docx':
-            cv = PDF2DOCXConverter(input_stream)
-            cv.convert(output, start=0, end=None)
-            cv.close()
-        elif output_format.lower() in ['jpeg', 'png']:
-            images = pdf2image.convert_from_path(input_stream)
-            for img in images:
-                img.save(output, format=output_format.upper())
-        else:
-            raise ValueError("Formato de salida no soportado para PDF.")
-        output.seek(0)
-
-    # Función para manejar la conversión de imágenes
-    def convert_images():
-        if output_format.lower() not in ['jpeg', 'png']:
-            raise ValueError("Formato de imagen no válido. Los formatos válidos son: jpeg, png, bmp, gif, tiff")
-        try:
-            with Image.open(input_stream) as img:
-                if output_format.lower() == 'pdf':
-                    img.save(output, format='PDF')
-                elif output_format.lower() in ['docx', 'pptx', 'xlsx']:
-                    raise NotImplementedError(f"La conversión de imágenes a {output_format.upper()} aún no está implementada.")
-                else:
-                    img.save(output, format=output_format.upper())
-        except Exception as e:
-            raise ValueError(f"Ocurrió un error al convertir la imagen: {str(e)}")
-        output.seek(0)
-
-    # Función para manejar la conversión de DOCX
-    def convert_docx():
-        temp_path = tempfile.mktemp(suffix='.docx')
-        with open(temp_path, 'wb') as f:
-            f.write(input_stream.read())
-
-        if output_format.lower() == 'pdf':
-            docx_to_pdf(temp_path, output.name)
-        elif output_format.lower() == 'xlsx':
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            doc = Document(temp_path)
-            for i, para in enumerate(doc.paragraphs):
-                ws.cell(row=i+1, column=1, value=para.text)
-            wb.save(output.name)
-        elif output_format.lower() == 'pptx':
-            prs = Presentation()
-            doc = Document(temp_path)
-            for para in doc.paragraphs:
-                slide = prs.slides.add_slide(prs.slide_layouts[1])
-                text_box = slide.shapes.add_textbox(0, 0, prs.slide_width, prs.slide_height)
-                text_frame = text_box.text_frame
-                text_frame.text = para.text
-            prs.save(output.name)
-        elif output_format.lower() in ['jpeg', 'png']:
-            raise NotImplementedError("La conversión de DOCX a imagen aún no está implementada.")
-        else:
-            raise ValueError("Formato de salida no soportado para DOCX.")
-        output.seek(0)
-
-    # Función para manejar la conversión de XLSX
-    def convert_xlsx():
-        temp_path = tempfile.mktemp(suffix='.xlsx')
-        with open(temp_path, 'wb') as f:
-            f.write(input_stream.read())
-
-        if output_format.lower() == 'pdf':
-            pdf_path = tempfile.mktemp(suffix='.pdf')
-            subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf', temp_path, '--outdir', os.path.dirname(pdf_path)])
-            with open(pdf_path, 'rb') as pdf_file:
-                output.write(pdf_file.read())
-        elif output_format.lower() == 'docx':
-            wb = pd.read_excel(temp_path)
-            doc = Document()
-            for row in wb.values:
-                doc.add_paragraph(' '.join(map(str, row)))
-            doc.save(output.name)
-        elif output_format.lower() == 'pptx':
-            prs = Presentation()
-            wb = pd.read_excel(temp_path)
-            for row in wb.values:
-                slide = prs.slides.add_slide(prs.slide_layouts[1])
-                text_box = slide.shapes.add_textbox(0, 0, prs.slide_width, prs.slide_height)
-                text_frame = text_box.text_frame
-                text_frame.text = ' '.join(map(str, row))
-            prs.save(output.name)
-        elif output_format.lower() in ['jpeg', 'png']:
-            raise NotImplementedError("La conversión de XLSX a imagen aún no está implementada.")
-        else:
-            raise ValueError("Formato de salida no soportado para XLSX.")
-        output.seek(0)
-
-    # Ejecutar la conversión según el tipo de archivo
-    if file_type == 'pdf':
-        convert_pdf()
-    elif file_type == 'imagen':
-        convert_images()
-    elif file_type == 'docx':
-        convert_docx()
-    elif file_type == 'xlsx':
-        convert_xlsx()
+# Funciones para convertir archivos PDF a diferentes formatos
+def convert_pdf(input_stream, output_format):
+    if output_format == 'docx':
+        return convert_pdf_to_docx(input_stream)
+    elif output_format == 'pptx':
+        return convert_pdf_to_pptx(input_stream)
+    elif output_format == 'xlsx':
+        return convert_pdf_to_xlsx(input_stream)
+    elif output_format == 'jpeg':
+        return convert_pdf_to_image(input_stream, 'JPEG')
+    elif output_format == 'png':
+        return convert_pdf_to_image(input_stream, 'PNG')
     else:
-        raise ValueError("Tipo de archivo no soportado.")
+        raise ValueError("Formato de salida no soportado para PDF.")
 
-    # Crear nombre de archivo para la salida
-    filename = f'converted_file.{output_format}'
-    
-    return send_file(output, as_attachment=True, download_name=filename, mimetype=f'application/{output_format.lower()}')
+def convert_pdf_to_docx(input_stream):
+    output = BytesIO()
+    with tempfile.NamedTemporaryFile(delete=True, suffix='.pdf') as temp_input, \
+         tempfile.NamedTemporaryFile(delete=True, suffix='.docx') as temp_output:
+        temp_input.write(input_stream.read())
+        temp_input.flush()
+
+        converter = PDF2DOCXConverter(temp_input.name)
+        converter.convert(temp_output.name)
+        converter.close()
+
+        with open(temp_output.name, 'rb') as f:
+            output.write(f.read())
+
+    output.seek(0)
+    return output
+
+def convert_pdf_to_pptx(input_stream):
+    output = BytesIO()
+    with tempfile.NamedTemporaryFile(delete=True, suffix='.pdf') as temp_input, \
+         tempfile.NamedTemporaryFile(delete=True, suffix='.pptx') as temp_output:
+        temp_input.write(input_stream.read())
+        temp_input.flush()
+
+        presentation = Presentation()
+        with pdfplumber.open(temp_input.name) as pdf:
+            for page in pdf.pages:
+                slide_layout = presentation.slide_layouts[5]
+                slide = presentation.slides.add_slide(slide_layout)
+                textbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
+                textbox.text = page.extract_text()
+
+        presentation.save(temp_output.name)
+        with open(temp_output.name, 'rb') as f:
+            output.write(f.read())
+
+    output.seek(0)
+    return output
+
+def convert_pdf_to_xlsx(input_stream):
+    output = BytesIO()
+    with tempfile.NamedTemporaryFile(delete=True, suffix='.pdf') as temp_input, \
+         tempfile.NamedTemporaryFile(delete=True, suffix='.xlsx') as temp_output:
+        temp_input.write(input_stream.read())
+        temp_input.flush()
+
+        workbook = Workbook()
+        sheet = workbook.active
+        with pdfplumber.open(temp_input.name) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                for i, line in enumerate(text.split('\n'), start=1):
+                    sheet[f'A{i}'] = line
+
+        workbook.save(temp_output.name)
+        with open(temp_output.name, 'rb') as f:
+            output.write(f.read())
+
+    output.seek(0)
+    return output
+
+def convert_pdf_to_image(input_stream, format):
+    output = BytesIO()
+    with tempfile.NamedTemporaryFile(delete=True, suffix='.pdf') as temp_input:
+        temp_input.write(input_stream.read())
+        temp_input.flush()
+
+        images = convert_from_path(temp_input.name)
+        images[0].save(output, format=format)
+
+    output.seek(0)
+    return output
+
+def convert_docx(input_stream, output_format):
+    if output_format == 'pdf':
+        return convert_docx_to_pdf(input_stream)
+    elif output_format == 'pptx':
+        return convert_docx_to_pptx(input_stream)
+    elif output_format == 'xlsx':
+        return convert_docx_to_xlsx(input_stream)
+    else:
+        raise ValueError("Formato de salida no soportado para DOCX.")
+
+# Funciones para convertir archivos DOCX a diferentes formatos
+def convert_docx_to_pdf(input_stream):
+    try:
+        output = BytesIO()
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_input, \
+             tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_output:
+            temp_input.write(input_stream.read())
+            temp_input.flush()
+            
+            # Convertir DOCX a PDF usando LibreOffice
+            subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf', temp_input.name, '--outdir', tempfile.gettempdir()], check=True)
+            
+            # Leer el archivo PDF resultante
+            with open(temp_output.name, 'rb') as f:
+                output.write(f.read())
+
+            os.remove(temp_input.name)
+            os.remove(temp_output.name)
+        
+        output.seek(0)
+        return output
+    except Exception as e:
+        raise ValueError(f"Error convirtiendo DOCX a PDF: {str(e)}")
+
+def convert_docx_to_pptx(input_stream):
+    try:
+        output = BytesIO()
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_input, \
+             tempfile.NamedTemporaryFile(delete=False, suffix='.pptx') as temp_output:
+            temp_input.write(input_stream.read())
+            temp_input.flush()
+
+            doc = Document(temp_input.name)
+            presentation = Presentation()
+
+            for paragraph in doc.paragraphs:
+                slide_layout = presentation.slide_layouts[5]
+                slide = presentation.slides.add_slide(slide_layout)
+                textbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
+                textbox.text = paragraph.text
+
+            presentation.save(temp_output.name)
+
+            with open(temp_output.name, 'rb') as f:
+                output.write(f.read())
+
+            os.remove(temp_input.name)
+            os.remove(temp_output.name)
+        
+        output.seek(0)
+        return output
+    except Exception as e:
+        raise ValueError(f"Error convirtiendo DOCX a PPTX: {str(e)}")
+
+def convert_docx_to_xlsx(input_stream):
+    try:
+        output = BytesIO()
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_input, \
+             tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as temp_output:
+            temp_input.write(input_stream.read())
+            temp_input.flush()
+
+            doc = Document(temp_input.name)
+            workbook = Workbook()
+            sheet = workbook.active
+
+            for i, paragraph in enumerate(doc.paragraphs, start=1):
+                sheet[f'A{i}'] = paragraph.text
+
+            workbook.save(temp_output.name)
+
+            with open(temp_output.name, 'rb') as f:
+                output.write(f.read())
+
+            os.remove(temp_input.name)
+            os.remove(temp_output.name)
+        
+        output.seek(0)
+        return output
+    except Exception as e:
+        raise ValueError(f"Error convirtiendo DOCX a XLSX: {str(e)}")
+
+# Funciones para convertir archivos PPTX a diferentes formatos
+def convert_pptx(input_stream, output_format):
+    if output_format == 'pdf':
+        return convert_pptx_to_pdf(input_stream)
+    elif output_format == 'docx':
+        return convert_pptx_to_docx(input_stream)
+    elif output_format == 'xlsx':
+        return convert_pptx_to_xlsx(input_stream)
+    else:
+        raise ValueError("Formato de salida no soportado para PPTX.")
+
+def convert_pptx_to_pdf(input_stream):
+    try:
+        output = BytesIO()
+        pdf = FPDF()
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pptx') as temp_input, \
+             tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_output:
+            temp_input.write(input_stream.read())
+            temp_input.flush()
+
+            presentation = Presentation(temp_input.name)
+            
+            for slide in presentation.slides:
+                pdf.add_page()
+                pdf.set_font("Arial", size=12)
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        pdf.multi_cell(0, 10, shape.text)
+            
+            pdf.output(temp_output.name)
+
+            with open(temp_output.name, 'rb') as f:
+                output.write(f.read())
+
+            os.remove(temp_input.name)
+            os.remove(temp_output.name)
+        
+        output.seek(0)
+        return output
+    except Exception as e:
+        raise ValueError(f"Error convirtiendo PPTX a PDF: {str(e)}")
+
+def convert_pptx_to_docx(input_stream):
+    output = BytesIO()
+    with tempfile.NamedTemporaryFile(delete=True, suffix='.pptx') as temp_input, \
+         tempfile.NamedTemporaryFile(delete=True, suffix='.docx') as temp_output:
+        temp_input.write(input_stream.read())
+        temp_input.flush()
+
+        presentation = Presentation(temp_input.name)
+        doc = Document()
+
+        for slide in presentation.slides:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    doc.add_paragraph(shape.text)
+
+        doc.save(temp_output.name)
+        with open(temp_output.name, 'rb') as f:
+            output.write(f.read())
+
+    output.seek(0)
+    return output
+
+def convert_pptx_to_xlsx(input_stream):
+    output = BytesIO()
+    with tempfile.NamedTemporaryFile(delete=True, suffix='.pptx') as temp_input, \
+         tempfile.NamedTemporaryFile(delete=True, suffix='.xlsx') as temp_output:
+        temp_input.write(input_stream.read())
+        temp_input.flush()
+
+        presentation = Presentation(temp_input.name)
+        workbook = Workbook()
+        sheet = workbook.active
+
+        for slide in presentation.slides:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    sheet.append([shape.text])
+
+        workbook.save(temp_output.name)
+        with open(temp_output.name, 'rb') as f:
+            output.write(f.read())
+
+    output.seek(0)
+    return output
+
+# Funciones para convertir archivos XLSX a diferentes formatos
+def convert_xlsx(input_stream, output_format):
+    if output_format == 'pdf':
+        return convert_xlsx_to_pdf(input_stream)
+    elif output_format == 'pptx':
+        return convert_xlsx_to_pptx(input_stream)
+    elif output_format == 'docx':
+        return convert_xlsx_to_docx(input_stream)
+    else:
+        raise ValueError("Formato de salida no soportado para XLSX.")
+
+def convert_xlsx_to_pdf(input_stream):
+    try:
+        output = BytesIO()
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as temp_input, \
+             tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_output:
+            temp_input.write(input_stream.read())
+            temp_input.flush()
+
+            workbook = load_workbook(temp_input.name)
+            pdf = FPDF()
+
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                pdf.add_page()
+                pdf.set_font("Arial", size=12)
+                pdf.cell(200, 10, txt=sheet_name, ln=True, align='C')
+
+                for row in sheet.iter_rows(values_only=True):
+                    line = "\t".join(map(str, row))
+                    pdf.multi_cell(0, 10, line)
+
+            pdf.output(temp_output.name)
+
+            with open(temp_output.name, 'rb') as f:
+                output.write(f.read())
+
+            os.remove(temp_input.name)
+            os.remove(temp_output.name)
+        
+        output.seek(0)
+        return output
+    except Exception as e:
+        raise ValueError(f"Error convirtiendo XLSX a PDF: {str(e)}")
+
+def convert_xlsx_to_pptx(input_stream):
+    output = BytesIO()
+    with tempfile.NamedTemporaryFile(delete=True, suffix='.xlsx') as temp_input, \
+         tempfile.NamedTemporaryFile(delete=True, suffix='.pptx') as temp_output:
+        temp_input.write(input_stream.read())
+        temp_input.flush()
+
+        wb = load_workbook(temp_input.name)
+        sheet = wb.active
+        presentation = Presentation()
+
+        for row in sheet.iter_rows(values_only=True):
+            slide_layout = presentation.slide_layouts[5]
+            slide = presentation.slides.add_slide(slide_layout)
+            textbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
+            textbox.text = "\t".join(map(str, row))
+
+        presentation.save(temp_output.name)
+        with open(temp_output.name, 'rb') as f:
+            output.write(f.read())
+
+    output.seek(0)
+    return output
+
+def convert_xlsx_to_docx(input_stream):
+    output = BytesIO()
+    with tempfile.NamedTemporaryFile(delete=True, suffix='.xlsx') as temp_input, \
+         tempfile.NamedTemporaryFile(delete=True, suffix='.docx') as temp_output:
+        temp_input.write(input_stream.read())
+        temp_input.flush()
+
+        wb = load_workbook(temp_input.name)
+        sheet = wb.active
+        doc = Document()
+
+        for row in sheet.iter_rows(values_only=True):
+            doc.add_paragraph("\t".join(map(str, row)))
+
+        doc.save(temp_output.name)
+        with open(temp_output.name, 'rb') as f:
+            output.write(f.read())
+
+    output.seek(0)
+    return output
+
+# Función principal de conversión
+def convert(input_stream, input_type, output_format):
+    if input_type == 'pdf':
+        return convert_pdf(input_stream, output_format)
+    elif input_type == 'docx':
+        return convert_docx(input_stream, output_format)
+    elif input_type == 'pptx':
+        return convert_pptx(input_stream, output_format)
+    elif input_type == 'xlsx':
+        return convert_xlsx(input_stream, output_format)
+    else:
+        raise ValueError("Tipo de entrada no soportado")
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -253,13 +583,19 @@ def index():
             abort(400, description="No se ha enviado ningún archivo.")
         
         action_type = request.form.get('action_type')
-        file_type = request.form.get('file_type', '')
-        quality = int(request.form.get('quality', 85))
-        quality_kb = int(request.form.get('quality_kb', 500))  # Toma el tamaño objetivo en KB
+        file_type = request.form.get('file_type')
+        output_format = request.form.get('output_format', '').lower()
+        quality = request.form.get('quality', 85, type=int)
+        quality_kb = request.form.get('quality_kb', 100, type=int)
         bitrate = request.form.get('bitrate', '500k')
-        output_format = request.form.get('output_format', '')
-
         file_stream = BytesIO(file.read())
+        filename = secure_filename(file.filename)
+
+        detected_file_type = detect_file_type(file_stream, filename)
+        file_stream.seek(0)
+
+        if detected_file_type == 'desconocido':
+            abort(400, description="Tipo de archivo no soportado o no reconocido.")
 
         try:
             if action_type == 'compress':
@@ -292,56 +628,120 @@ def index():
                     output_file = compress_video(file_stream, bitrate)
                     filename = f'compressed_{file.filename.rsplit(".", 1)[0]}.mp4'
                     return send_file(output_file, as_attachment=True, download_name=filename, mimetype='video/mp4')
-                
+    
             elif action_type == 'convert':
-                if file_type == 'imagen':
-                    output_file = convert_image(file_stream, output_format)
-                    mime_type = {
-                        'jpeg': 'image/jpeg',
-                        'png': 'image/png',
-                        'bmp': 'image/bmp',
-                        'gif': 'image/gif',
-                        'tiff': 'image/tiff'
-                    }.get(output_format.lower(), 'application/octet-stream')
-                    extension = {
-                        'jpeg': 'jpeg',
-                        'png': 'png',
-                        'bmp': 'bmp',
-                        'gif': 'gif',
-                        'tiff': 'tiff'
-                    }.get(output_format.lower(), 'bin')
-                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{extension}'
-                    
-                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype=mime_type)
-                
-                elif file_type == 'pdf':
-                    output_file = convert_archivo(file_stream, file_type, output_format)
-                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{output_format}'
-                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='application/octet-stream')
-                
-                elif file_type == 'docx':
-                    output_file = convert_archivo(file_stream, file_type, output_format)
-                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{output_format}'
-                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='application/octet-stream')
-                
-                elif file_type == 'pptx':
-                    output_file = convert_archivo(file_stream, file_type, output_format)
-                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{output_format}'
-                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='application/octet-stream')
-                
-                elif file_type == 'xlsx':
-                    output_file = convert_archivo(file_stream, file_type, output_format)
-                    filename = f'converted_{file.filename.rsplit(".", 1)[0]}.{output_format}'
-                    return send_file(output_file, as_attachment=True, download_name=filename, mimetype='application/octet-stream')
-
+                return handle_conversion(file_stream, detected_file_type, output_format, filename)
             else:
-                abort(400, description="Tipo de acción no soportado.")
+                raise ValueError("Acción no soportada.")
         except ValueError as e:
-            return str(e), 400
+            abort(400, description=str(e))
         except Exception as e:
-            return str(e), 500
+            import traceback
+            traceback.print_exc()
+            abort(500, description=f"Error interno del servidor: {str(e)}")
 
     return render_template('index.html')
+
+def handle_compression(file_stream, file_type, output_format, quality, quality_kb, bitrate):
+    try:
+        if file_type == 'imagen':
+            if output_format.lower() not in ['jpeg', 'png', 'bmp', 'gif', 'tiff']:
+                raise ValueError("Formato de salida no válido para imágenes. Los formatos válidos son: jpeg, png, bmp, gif, tiff.")
+            
+            output_file = compress_image(file_stream, quality)
+            mime_type = {
+                'jpeg': 'image/jpeg',
+                'png': 'image/png',
+                'bmp': 'image/bmp',
+                'gif': 'image/gif',
+                'tiff': 'image/tiff'
+            }.get(output_format.lower(), 'application/octet-stream')
+            filename = f'compressed_file.{output_format.lower()}'
+        
+        elif file_type == 'pdf':
+            output_file = compress_pdf(file_stream, quality_kb)
+            mime_type = 'application/pdf'
+            filename = 'compressed_file.pdf'
+
+        elif file_type == 'docx':
+            output_file = compress_docx(file_stream, quality_kb)
+            mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            filename = 'compressed_file.docx'
+
+        elif file_type == 'pptx':
+            output_file = compress_pptx(file_stream, quality_kb)
+            mime_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            filename = 'compressed_file.pptx'
+
+        elif file_type == 'xlsx':
+            output_file = compress_xlsx(file_stream, quality_kb)
+            mime_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            filename = 'compressed_file.xlsx'
+        
+        elif file_type == 'video':
+            output_file_path = compress_video(file_stream, bitrate)
+            mime_type = 'video/mp4'
+            filename = 'compressed_video.mp4'
+            return send_file(output_file_path, as_attachment=True, download_name=filename, mimetype=mime_type)
+
+        else:
+            raise ValueError("Tipo de archivo no soportado para compresión.")
+
+        return send_file(output_file, as_attachment=True, download_name=filename, mimetype=mime_type)
+
+    except ValueError as e:
+        abort(400, description=str(e))
+    except FileNotFoundError as e:
+        abort(404, description=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()  # Imprime la traza del error para depuración
+        abort(500, description=f"Error interno del servidor: {str(e)}")
+
+def handle_conversion(file_stream, file_type, output_format, filename=None):
+    output_format = output_format.lower()
+
+    if not filename:
+        abort(400, description="Nombre de archivo no proporcionado.")
+    
+    filename = secure_filename(filename)
+
+    valid_formats = {
+        'imagen': ['jpeg', 'png', 'bmp', 'gif', 'tiff'],
+        'pdf': ['docx', 'pptx', 'xlsx', 'jpeg', 'png'],
+        'docx': ['pdf', 'pptx', 'xlsx'],
+        'pptx': ['pdf', 'docx', 'xlsx'],
+        'xlsx': ['pdf', 'docx', 'pptx'],
+    }
+
+    if file_type not in valid_formats:
+        abort(400, description=f"Tipo de archivo no soportado: {file_type}.")
+    
+    if output_format not in valid_formats.get(file_type, []):
+        abort(400, description=f"Formato de salida no válido para {file_type}. Los formatos válidos son: {', '.join(valid_formats[file_type])}.")
+
+    try:
+        output_file = convert(file_stream, file_type, output_format)
+        mime_type_map = {
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'pdf': 'application/pdf',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png'
+        }
+        mime_type = mime_type_map.get(output_format, 'application/octet-stream')
+        output_filename = f'converted_file.{output_format}'
+
+        return send_file(output_file, as_attachment=True, download_name=output_filename, mimetype=mime_type)
+
+    except ValueError as e:
+        abort(400, description=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        abort(500, description=f"Error interno del servidor: {str(e)}")
+        
 if __name__ == '__main__':
     app.run(debug=True)
 

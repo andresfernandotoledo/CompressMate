@@ -1,0 +1,239 @@
+html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
+    }
+
+    body {
+        background-image: url("/home/andres/Escritorio/CompressMate/fondo.gif");
+        background-repeat: no-repeat;
+        background-size: 1400px 697px;
+        background-position: center;
+        margin: 0;
+        padding: 0;
+    }
+
+    .video-background {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        z-index: -1;
+    }
+
+    .content {
+        position: relative;
+        z-index: 1;
+        text-align: center; /* Centrar todo el contenido dentro del contenedor */
+        color: #fff;
+        padding: 20px;
+        padding-bottom: 100px;
+        background: rgba(0, 0, 0, 0.5);
+    }
+
+    form {
+         max-width: 600px;
+         margin: 0 auto; /* Centra el formulario horizontalmente */
+         padding: 20px;
+         border-radius: 5px;
+         background-color: transparent;
+         backdrop-filter: blur(5px);
+         text-align: center; /* Centra el contenido dentro del formulario */
+    }
+
+    label {
+        display: block;
+        margin-bottom: 10px;
+        font-weight: bold;
+        color: #fff;
+    }
+
+    select, input[type="number"] {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+
+    .hidden {
+        display: none;
+    }
+
+    button[type="submit"], .custom-file-upload {
+        background-color: #00ffff;
+        color: black;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+        display: inline-block; /* Asegura que los botones se alineen uno al lado del otro si están en una fila */
+        margin-top: 10px; /* Espacio arriba de los botones */
+    }
+
+    button[type="submit"]:hover, .custom-file-upload:hover {
+        background-color: #00cccc;
+    }
+
+    .custom-file-upload {
+        display: inline-block;
+    }
+
+    .custom-file-upload input[type=file] {
+        display: none;
+    }
+
+    h1 {
+        font-family: 'Pacifico', cursive;
+        font-size: 5rem;
+        color: #FFFFFF;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        margin-bottom: 20px;
+        text-align: center; /* Centrar el título */
+    }
+
+    .calculator-icon {
+            position: fixed;
+            top: 10px; /* Ajustar la posición vertical desde el borde superior */
+            left: 10px; /* Ajustar la posición horizontal desde el borde izquierdo */
+            background-color: #ffffff;
+            border-radius: 50%;
+            padding: 10px;
+            cursor: pointer;
+            z-index: 1001; /* Asegura que el ícono esté sobre otros elementos */
+            display: flex; /* Alinea ícono y texto en una fila */
+            align-items: center; /* Alinea verticalmente el contenido del ícono */
+        }
+
+       .calculator-icon img {
+            width: 40px; /* Ajusta el tamaño del ícono según sea necesario */
+        }
+
+        .calculator-icon p {
+            cursor: pointer;
+            margin-left: 10px;
+            font-size: 14px;
+            color: #000; /* Cambiar el color según tus necesidades */
+        }
+
+    .calculator {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        padding: 10px;
+        background-color: rgba(255, 255, 255, 0.8);
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        z-index: 1000;
+        text-align: left;
+        display: none; /* Ocultar por defecto */
+    }
+
+    .calculator.active {
+        display: block; /* Mostrar si la clase active está presente */
+     }
+
+    .calculator label {
+        color: #000;
+        font-weight: bold; 
+    }
+
+    .calculator label, .calculator input, .calculator button {
+        display: block;
+        margin: 5px 0;
+        width: 100%;
+        max-width: 300px;
+        padding: 8px;
+        box-sizing: border-box;
+    }
+
+    .calculator button:hover {
+        background-color: #00cccc; 
+    }
+
+    select {
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 14px;
+        appearance: none;
+        background-image: url('arrow-down.png');
+        background-repeat: no-repeat;
+        background-position: right 10px center;
+        cursor: pointer;
+    }
+
+    footer {
+        background-color: #000;
+        color: #fff;
+        padding: 20px;
+        height: 40px;
+        min-height: 60px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        box-sizing: border-box;
+        z-index: 1;
+    }
+
+    footer .left,
+    footer .right {
+        margin: 0;
+    }
+
+    footer .right {
+        text-align: right;
+        max-width: 60%;
+    }
+
+    footer a {
+        color: #00ffff;
+        text-decoration: none;
+    }
+
+    footer a:hover {
+        text-decoration: underline;
+    }
+
+    #process-button {
+    position: relative;
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+/* Estilos del texto del botón */
+#button-text {
+    display: inline-block;
+}
+
+/* Estilos del spinner */
+.spinner {
+    border: 4px solid #f3f3f3; /* Color de fondo */
+    border-top: 4px solid #00ffff; /* Color de la animación */
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    animation: spin 1s linear infinite;
+}
+
+/* Animación del spinner */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Ocultar el spinner por defecto */
+.hidden {
+    display: none;
+}
